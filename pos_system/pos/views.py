@@ -5,7 +5,8 @@ from django.db import transaction
 from django.shortcuts import render, redirect # Ensure redirect is imported
 from django.contrib.auth import authenticate, login, logout # Import authentication functions
 from django.contrib.auth.decorators import login_required # Import login_required decorator
-from .models import Product, Order, OrderItem
+from .models import Product, Order, OrderItem, AccompanimentItem
+from django.forms.models import model_to_dict
 
 @login_required # Protect the POS page
 def index(request):
@@ -114,3 +115,35 @@ def user_login(request):
 def user_logout(request):
     logout(request)
     return redirect('login') # Redirect to login page after logout
+
+def get_order_history(request, table_number):
+    if request.method == 'GET':
+        try:
+            orders = Order.objects.filter(table_number=table_number).order_by('-timestamp')
+            
+            orders_data = []
+            for order in orders:
+                order_items = OrderItem.objects.filter(order=order)
+                items_data = []
+                for item in order_items:
+                    item_dict = model_to_dict(item, fields=['name', 'price', 'quantity'])
+                    
+                    accompaniment_items = AccompanimentItem.objects.filter(order_item=item)
+                    accompaniments_data = []
+                    for acc_item in accompaniment_items:
+                        accompaniments_data.append(model_to_dict(acc_item, fields=['name', 'price', 'quantity']))
+                    item_dict['accompaniments'] = accompaniments_data
+                    items_data.append(item_dict)
+                
+                orders_data.append({
+                    'id': order.id,
+                    'timestamp': order.timestamp.isoformat(),
+                    'table_number': order.table_number,
+                    'total_price': order.total_price,
+                    'items': items_data
+                })
+            
+            return JsonResponse({'orders': orders_data})
+        except Exception as e:
+            return JsonResponse({'error': str(e)}, status=500)
+    return JsonResponse({'error': 'Invalid request method'}, status=405)
