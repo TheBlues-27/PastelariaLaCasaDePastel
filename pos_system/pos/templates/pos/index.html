@@ -43,7 +43,8 @@
             <ul class="cart-list" id="cart-list"></ul>
             <div class="subtotal" id="subtotal">Subtotal: R$ 0,00</div>
             <button id="confirm-accompaniments-btn" style="width:100%;margin-top:8px; display: none;">Confirmar Acompanhamentos</button>
-            <button id="print-all-btn" style="width:100%;margin-top:20px;">Imprimir Pedido Completo</button>
+            <button id="kitchen-btn" style="width:100%;margin-top:20px;">Imprimir Cozinha</button>
+            <button id="client-btn" style="width:100%;margin-top:8px;">Imprimir Cliente</button>
         </div>
     </div>
 
@@ -78,42 +79,201 @@
         </div>
     </div>
 
+    <!-- Payment Method Popup -->
+    <div id="payment-method-popup" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); z-index: 1002; justify-content: center; align-items: center;">
+        <div style="background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.2); max-width: 400px; width: 90%;">
+            <h3 style="color:#333;margin-bottom:16px;">Selecione o Método de Pagamento</h3>
+            <div style="display: flex; flex-direction: column; gap: 10px;">
+                <button class="payment-btn" data-method="Dinheiro" style="padding: 10px; background-color: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer;">Dinheiro</button>
+                <button class="payment-btn" data-method="Cartao" style="padding: 10px; background-color: #2196F3; color: white; border: none; border-radius: 4px; cursor: pointer;">Cartão</button>
+                <button class="payment-btn" data-method="Pix" style="padding: 10px; background-color: #FFC107; color: #333; border: none; border-radius: 4px; cursor: pointer;">Pix</button>
+            </div>
+            <button id="cancel-payment-popup-btn" style="width:100%;margin-top:20px; padding: 10px; background-color: #f44336; color: white; border: none; border-radius: 4px; cursor: pointer;">Cancelar</button>
+        </div>
+    </div>
+
     <script>
-        // --- TABLE TAB LOGIC ---
-        const NUM_TABLES = 10; // Change this for more tables
-        let currentTable = 1;
-        let carts = {};
-        for (let i = 1; i <= NUM_TABLES; i++) {
+        const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
+        let carts = {}; // Stores cart items for each table
+        let currentTable = 1; // Default to table 1
+        let activeMainProduct = null; // To track the main product for accompaniment selection
+
+        // Initialize carts for 5 tables
+        for (let i = 1; i <= 5; i++) {
             carts[i] = {};
         }
 
-        // Global state for accompaniment selection
-        let activeMainProductId = null;
-
-        // Get CSRF token from meta tag
-        const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
+        function generateOrderNumber() {
+            const now = new Date();
+            const year = now.getFullYear().toString().slice(-2);
+            const month = (now.getMonth() + 1).toString().padStart(2, '0');
+            const day = now.getDate().toString().padStart(2, '0');
+            const hours = now.getHours().toString().padStart(2, '0');
+            const minutes = now.getMinutes().toString().padStart(2, '0');
+            const seconds = now.getSeconds().toString().padStart(2, '0');
+            return `${year}${month}${day}-${hours}${minutes}${seconds}`;
+        }
 
         function renderTabs() {
-            const tabDiv = document.getElementById('table-tabs');
-            tabDiv.innerHTML = '';
-            for (let i = 1; i <= NUM_TABLES; i++) {
-                const btn = document.createElement('button');
-                btn.textContent = `Mesa ${i}`;
-                btn.style.padding = '8px 16px';
-                btn.style.borderRadius = '8px';
-                btn.style.border = i === currentTable ? '2px solid var(--primary-color)' : '1px solid #ccc';
-                btn.style.background = i === currentTable ? 'var(--primary-color)' : '#fff';
-                btn.style.color = i === currentTable ? '#fff' : '#333';
-                btn.style.cursor = 'pointer';
-                btn.onclick = function() {
-                    currentTable = i;
-                    clearActiveMainProduct(); // Clear active main product when switching tables
-                    renderTabs();
-                    renderCart();
-                };
-                tabDiv.appendChild(btn);
+            const tableTabsDiv = document.getElementById('table-tabs');
+            tableTabsDiv.innerHTML = ''; // Clear existing tabs
+            for (let i = 1; i <= 5; i++) {
+                const button = document.createElement('button');
+                button.textContent = `Mesa ${i}`;
+                button.className = 'tab-button';
+                if (i === currentTable) {
+                    button.classList.add('active');
+                }
+                button.onclick = () => switchTable(i);
+                tableTabsDiv.appendChild(button);
             }
             document.getElementById('current-table-num').textContent = currentTable;
+        }
+
+        function switchTable(tableNum) {
+            currentTable = tableNum;
+            renderTabs();
+            renderCart();
+            clearActiveMainProduct(); // Clear active product when switching tables
+            hideAccompanimentsSection(); // Hide accompaniments if open
+            hideOrderHistoryPopup(); // Hide history if open
+            hidePaymentMethodPopup(); // Hide payment if open
+        }
+
+        function addToCart(productId, productName, productPrice, productCategory) {
+            const price = parseFloat(productPrice);
+
+            if (productCategory === 'tradicional' || productCategory === 'especial' || productCategory === 'doce') {
+                // If a main product is selected, set it as active and show accompaniments
+                activeMainProduct = { id: productId, name: productName, price: price, category: productCategory, quantity: 1, accompaniments: {} };
+                showAccompanimentsSection();
+            } else if (productCategory === 'acompanhamento') {
+                if (activeMainProduct) {
+                    // Add accompaniment to the active main product
+                    if (activeMainProduct.accompaniments[productId]) {
+                        activeMainProduct.accompaniments[productId].quantity++;
+                    } else {
+                        activeMainProduct.accompaniments[productId] = { id: productId, name: productName, price: price, category: productCategory, quantity: 1 };
+                    }
+                    renderCart(); // Re-render to show updated accompaniments
+                } else {
+                    // If no main product is active, add accompaniment directly to cart (as a standalone item)
+                    if (carts[currentTable][productId]) {
+                        carts[currentTable][productId].quantity++;
+                    } else {
+                        carts[currentTable][productId] = { id: productId, name: productName, price: price, category: productCategory, quantity: 1 };
+                    }
+                    renderCart();
+                }
+            } else { // For 'bebida' or other categories, add directly to cart
+                if (carts[currentTable][productId]) {
+                    carts[currentTable][productId].quantity++;
+                } else {
+                    carts[currentTable][productId] = { id: productId, name: productName, price: price, category: productCategory, quantity: 1 };
+                }
+                renderCart();
+            }
+        }
+
+        function removeFromCart(productId, isAccompaniment = false, mainProductId = null) {
+            if (isAccompaniment && mainProductId && carts[currentTable][mainProductId] && carts[currentTable][mainProductId].accompaniments[productId]) {
+                if (carts[currentTable][mainProductId].accompaniments[productId].quantity > 1) {
+                    carts[currentTable][mainProductId].accompaniments[productId].quantity--;
+                } else {
+                    delete carts[currentTable][mainProductId].accompaniments[productId];
+                }
+            } else if (carts[currentTable][productId]) {
+                if (carts[currentTable][productId].quantity > 1) {
+                    carts[currentTable][productId].quantity--;
+                } else {
+                    delete carts[currentTable][productId];
+                }
+            }
+            renderCart();
+        }
+
+        function clearActiveMainProduct() {
+            if (activeMainProduct) {
+                // Add the active main product and its accompaniments to the cart
+                if (carts[currentTable][activeMainProduct.id]) {
+                    // If product already exists, just update quantity and merge accompaniments
+                    carts[currentTable][activeMainProduct.id].quantity += activeMainProduct.quantity;
+                    for (const accId in activeMainProduct.accompaniments) {
+                        if (carts[currentTable][activeMainProduct.id].accompaniments[accId]) {
+                            carts[currentTable][activeMainProduct.id].accompaniments[accId].quantity += activeMainProduct.accompaniments[accId].quantity;
+                        } else {
+                            carts[currentTable][activeMainProduct.id].accompaniments[accId] = activeMainProduct.accompaniments[accId];
+                        }
+                    }
+                } else {
+                    carts[currentTable][activeMainProduct.id] = activeMainProduct;
+                }
+                activeMainProduct = null;
+            }
+            hideAccompanimentsSection(); // Always hide after confirming or cancelling
+            renderCart();
+        }
+
+        function renderCart() {
+            const cartList = document.getElementById('cart-list');
+            const subtotalElement = document.getElementById('subtotal');
+            cartList.innerHTML = '';
+            let subtotal = 0;
+
+            // Display active main product and its accompaniments separately if it exists
+            if (activeMainProduct) {
+                const mainItemLi = document.createElement('li');
+                mainItemLi.className = 'cart-item active-main-product';
+                mainItemLi.innerHTML = `
+                    <span>${activeMainProduct.quantity}x ${activeMainProduct.name}</span>
+                    <span>R$ ${(activeMainProduct.quantity * activeMainProduct.price).toFixed(2)}</span>
+                `;
+                cartList.appendChild(mainItemLi);
+                subtotal += activeMainProduct.quantity * activeMainProduct.price;
+
+                for (const accId in activeMainProduct.accompaniments) {
+                    const acc = activeMainProduct.accompaniments[accId];
+                    const accLi = document.createElement('li');
+                    accLi.className = 'cart-item accompaniment-item';
+                    accLi.innerHTML = `
+                        <span style="margin-left: 20px;">+ ${acc.quantity}x ${acc.name}</span>
+                        <span>R$ ${(acc.quantity * acc.price).toFixed(2)}</span>
+                        <button onclick="removeFromCart('${acc.id}', true, '${activeMainProduct.id}')" style="background-color: #f44336; color: white; border: none; border-index: 4px; cursor: pointer; margin-left: 8px;">-</button>
+                    `;
+                    cartList.appendChild(accLi);
+                    subtotal += acc.quantity * acc.price;
+                }
+            }
+
+            // Display items already in the cart
+            for (const productId in carts[currentTable]) {
+                const item = carts[currentTable][productId];
+                const listItem = document.createElement('li');
+                listItem.className = 'cart-item';
+                listItem.innerHTML = `
+                    <span>${item.quantity}x ${item.name}</span>
+                    <span>R$ ${(item.quantity * item.price).toFixed(2)}</span>
+                    <button onclick="removeFromCart('${productId}')" style="background-color: #f44336; color: white; border: none; border-radius: 4px; cursor: pointer; margin-left: 8px;">-</button>
+                `;
+                cartList.appendChild(listItem);
+                subtotal += item.quantity * item.price;
+
+                if (item.accompaniments) {
+                    for (const accId in item.accompaniments) {
+                        const acc = item.accompaniments[accId];
+                        const accLi = document.createElement('li');
+                        accLi.className = 'cart-item accompaniment-item';
+                        accLi.innerHTML = `
+                            <span style="margin-left: 20px;">+ ${acc.quantity}x ${acc.name}</span>
+                            <span>R$ ${(acc.quantity * acc.price).toFixed(2)}</span>
+                            <button onclick="removeFromCart('${acc.id}', true, '${productId}')" style="background-color: #f44336; color: white; border: none; border-radius: 4px; cursor: pointer; margin-left: 8px;">-</button>
+                        `;
+                        cartList.appendChild(accLi);
+                        subtotal += acc.quantity * acc.price;
+                    }
+                }
+            }
+            subtotalElement.textContent = `Subtotal: R$ ${subtotal.toFixed(2).replace('.', ',')}`;
         }
 
         function showAccompanimentsSection() {
@@ -148,7 +308,6 @@
             historyContent.innerHTML = '<p>Carregando histórico...</p>'; // Show loading message
 
             try {
-                // You will need to create a Django view and URL for '/get_order_history/<table_number>/'
                 const response = await fetch(`/get_order_history/${tableNumber}/`, {
                     method: 'GET',
                     headers: {
@@ -195,158 +354,13 @@
             }
         }
 
-        function highlightActiveMainProduct(id) {
-            // Remove highlight from previous active product
-            const prevActive = document.querySelector('.product-btn.active-main');
-            if (prevActive) {
-                prevActive.classList.remove('active-main');
-            }
-            // Add highlight to current active product
-            // Find the button by its onclick attribute which contains the product ID
-            const currentActiveBtn = document.querySelector(`.product-btn[onclick*="addToCart('${id}'"]`);
-            if (currentActiveBtn) {
-                currentActiveBtn.classList.add('active-main');
-            }
+        // --- Payment Method Popup Logic ---
+        function showPaymentMethodPopup() {
+            document.getElementById('payment-method-popup').style.display = 'flex';
         }
 
-        function clearActiveMainProduct() {
-            const prevActive = document.querySelector('.product-btn.active-main');
-            if (prevActive) {
-                prevActive.classList.remove('active-main');
-            }
-            activeMainProductId = null;
-            hideAccompanimentsSection();
-        }
-
-        // --- CART LOGIC ---
-        function addToCart(id, name, price, category) { // Pass category to addToCart
-            let cart = carts[currentTable];
-
-            // If an accompaniment is clicked while a main product is active
-            if (activeMainProductId !== null && category === 'acompanhamento') {
-                const mainProductInCart = cart[activeMainProductId];
-                if (mainProductInCart) {
-                    if (!mainProductInCart.accompaniments) {
-                        mainProductInCart.accompaniments = {};
-                    }
-                    if (!mainProductInCart.accompaniments[id]) {
-                        mainProductInCart.accompaniments[id] = { name: name, price: parseFloat(price), quantity: 1 };
-                    } else {
-                        mainProductInCart.accompaniments[id].quantity += 1;
-                    }
-                }
-            }
-            // If a main product (Tradicionais/Especiais) is clicked
-            else if (category === 'tradicional' || category === 'especial') {
-                // If there was an active main product, clear its active state
-                if (activeMainProductId !== null) {
-                    clearActiveMainProduct();
-                }
-                
-                // Add the new main product
-                if (!cart[id]) {
-                    cart[id] = { name: name, price: parseFloat(price), quantity: 1, category: category, accompaniments: {} };
-                } else {
-                    cart[id].quantity += 1;
-                }
-                activeMainProductId = id;
-                showAccompanimentsSection(); // Make accompaniments visible
-                highlightActiveMainProduct(id); // Highlight the newly active main product
-            }
-            // If any other product is clicked (e.g., Bebida, Doce, or Acompanhamento without active main)
-            else {
-                // If an accompaniment was active, clear it
-                if (activeMainProductId !== null) {
-                    clearActiveMainProduct();
-                }
-                if (!cart[id]) {
-                    cart[id] = { name: name, price: parseFloat(price), quantity: 1, category: category, accompaniments: {} };
-                } else {
-                    cart[id].quantity += 1;
-                }
-                hideAccompanimentsSection(); // Ensure accompaniments are hidden
-            }
-            renderCart();
-        }
-
-        function renderCart() {
-            let cart = carts[currentTable];
-            const cartList = document.getElementById('cart-list');
-            cartList.innerHTML = '';
-            let subtotal = 0;
-
-            for (const id in cart) {
-                const item = cart[id];
-                subtotal += item.price * item.quantity;
-                cartList.innerHTML += `<li>${item.name} - R$ ${item.price.toFixed(2).replace('.', ',')} x ${item.quantity}</li>`;
-
-                // Render accompaniments if they exist
-                if (item.accompaniments && Object.keys(item.accompaniments).length > 0) {
-                    for (const accId in item.accompaniments) {
-                        const acc = item.accompaniments[accId];
-                        subtotal += acc.price * acc.quantity;
-                        cartList.innerHTML += `<li style="margin-left: 20px; font-size: 0.9em; color: #555;">+ ${acc.name} - R$ ${acc.price.toFixed(2).replace('.', ',')} x ${acc.quantity}</li>`;
-                    }
-                }
-            }
-            document.getElementById('subtotal').innerText = `Subtotal: R$ ${subtotal.toFixed(2).replace('.', ',')}`;
-            document.getElementById('current-table-num').textContent = currentTable;
-        }
-
-        function formatForThermalPrinter(cart, orderNumber) {
-            let txt = "******** La casa de Pastel ********\n";
-            txt += `Pedido: ${orderNumber}\n`;
-            txt += `Mesa: ${currentTable}\n`;
-            txt += "-----------------------------------\n";
-            let subtotal = 0;
-            for (const id in cart) {
-                const item = cart[id];
-                txt += `${item.name.padEnd(20)} ${item.quantity} x R$${item.price.toFixed(2)}\n`;
-                subtotal += item.price * item.quantity;
-
-                if (item.accompaniments && Object.keys(item.accompaniments).length > 0) {
-                    for (const accId in item.accompaniments) {
-                        const acc = item.accompaniments[accId];
-                        txt += `  + ${acc.name.padEnd(18)} ${acc.quantity} x R$${acc.price.toFixed(2)}\n`;
-                        subtotal += acc.price * acc.quantity;
-                    }
-                }
-            }
-            txt += "-----------------------------------\n";
-            txt += `TOTAL: R$${subtotal.toFixed(2)}\n`;
-            txt += "******** Obrigado! ********\n";
-            return txt;
-        }
-
-        function formatForKitchen(cart, orderNumber) {
-            let txt = "***** La casa de Pastel - Cozinha *****\n";
-            txt += `Pedido: ${orderNumber}\n`;
-            txt += `Mesa: ${currentTable}\n`;
-            txt += "-----------------------------------\n";
-            for (const id in cart) {
-                const item = cart[id];
-                txt += `${item.name.padEnd(20)} x ${item.quantity}\n`;
-
-                if (item.accompaniments && Object.keys(item.accompaniments).length > 0) {
-                    for (const accId in item.accompaniments) {
-                        const acc = item.accompaniments[accId];
-                        txt += `  + ${acc.name.padEnd(18)} x ${acc.quantity}\n`;
-                    }
-                }
-            }
-            txt += "-----------------------------------\n";
-            txt += "Preparar conforme pedido!\n";
-            return txt;
-        }
-
-        function generateOrderNumber() {
-            const now = new Date();
-            const dateStr = now.toISOString().slice(0,10).replace(/-/g, '');
-            const timeStr = now.getHours().toString().padStart(2, '0') +
-                            now.getMinutes().toString().padStart(2, '0') +
-                            now.getSeconds().toString().padStart(2, '0');
-            const seq = Math.floor(Math.random() * 9000) + 1000; // random 4-digit number
-            return `${dateStr}${timeStr}-${seq}`;
+        function hidePaymentMethodPopup() {
+            document.getElementById('payment-method-popup').style.display = 'none';
         }
 
         async function saveOrderToDatabase(cart, tableNumber) {
@@ -355,7 +369,7 @@
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
-                        'X-CSRFToken': csrfToken // Send CSRF token
+                        'X-CSRFToken': csrfToken
                     },
                     body: JSON.stringify({
                         table_number: tableNumber,
@@ -380,42 +394,63 @@
             }
         }
 
-        document.getElementById('print-all-btn').onclick = async function() {
+        // Helper function to format for thermal printer (client ticket)
+        function formatForThermalPrinter(cart, orderNumber, paymentMethod) {
+            let receipt = `--- Pedido Cliente ---\n`;
+            receipt += `Mesa: ${currentTable}\n`;
+            receipt += `Pedido Nº: ${orderNumber}\n`;
+            receipt += `Data: ${new Date().toLocaleString()}\n`;
+            receipt += `----------------------\n`;
+            let subtotal = 0;
+            for (const productId in cart) {
+                const item = cart[productId];
+                receipt += `${item.quantity}x ${item.name} - R$ ${item.price.toFixed(2)}\n`;
+                subtotal += item.quantity * item.price;
+                if (item.accompaniments) {
+                    for (const accId in item.accompaniments) {
+                        const acc = item.accompaniments[accId];
+                        receipt += `  + ${acc.quantity}x ${acc.name} - R$ ${acc.price.toFixed(2)}\n`;
+                        subtotal += acc.quantity * acc.price;
+                    }
+                }
+            }
+            receipt += `----------------------\n`;
+            receipt += `Total: R$ ${subtotal.toFixed(2)}\n`;
+            receipt += `Método de Pagamento: ${paymentMethod}\n`; // Add payment method
+            receipt += `----------------------\n`;
+            receipt += `Obrigado!\n`;
+            return receipt;
+        }
+
+        // Helper function to format for kitchen ticket
+        function formatForKitchen(cart, orderNumber) {
+            let receipt = `--- Pedido Cozinha ---\n`;
+            receipt += `Mesa: ${currentTable}\n`;
+            receipt += `Pedido Nº: ${orderNumber}\n`;
+            receipt += `Data: ${new Date().toLocaleString()}\n`;
+            receipt += `----------------------\n`;
+            for (const productId in cart) {
+                const item = cart[productId];
+                receipt += `${item.quantity}x ${item.name}\n`;
+                if (item.accompaniments) {
+                    for (const accId in item.accompaniments) {
+                        const acc = item.accompaniments[accId];
+                        receipt += `  + ${acc.quantity}x ${acc.name}\n`;
+                    }
+                }
+            }
+            receipt += `----------------------\n`;
+            return receipt;
+        }
+
+        async function printKitchenTicketOnly() {
             let cart = carts[currentTable];
             if (Object.keys(cart).length === 0) {
                 alert("O carrinho está vazio!");
                 return;
             }
 
-            const orderId = await saveOrderToDatabase(cart, currentTable);
-            if (orderId === null) {
-                return; // Stop if saving failed
-            }
-
-            const orderNumber = generateOrderNumber();
-
-            // Print Client Ticket
-            const clientTxt = formatForThermalPrinter(cart, orderNumber).replace(/\n/g, '<br>');
-            const clientPrintWindow = window.open('', '_blank', 'width=400,height=600');
-            clientPrintWindow.document.write(`
-                <html>
-                <head>
-                    <title>Pedido Cliente ${orderNumber}</title>
-                    <style>
-                        body { font-family: monospace; padding: 20px; }
-                        .receipt { white-space: pre-wrap; font-size: 1.1em; }
-                    </style>
-                </head>
-                <body>
-                    <div class="receipt">${clientTxt}</div>
-                    <script>
-                        window.onload = function() { window.print(); }
-                    <\/script>
-                </body>
-                </html>
-            `);
-            clientPrintWindow.document.close();
-            clientPrintWindow.focus();
+            const orderNumber = generateOrderNumber(); // Generate a temporary order number for printing
 
             // Print Kitchen Ticket
             const kitchenTxt = formatForKitchen(cart, orderNumber).replace(/\n/g, '<br>');
@@ -439,11 +474,89 @@
             `);
             kitchenPrintWindow.document.close();
             kitchenPrintWindow.focus();
+            // Do NOT clear cart or save to DB here
+        }
 
-            // Clear cart for the current table after successful printing
+        async function processOrderAndPrintAll(paymentMethod) {
+            hidePaymentMethodPopup(); // Hide the payment popup immediately
+
+            let cart = carts[currentTable];
+            if (Object.keys(cart).length === 0) {
+                alert("O carrinho está vazio!");
+                return;
+            }
+
+            const orderId = await saveOrderToDatabase(cart, currentTable);
+            if (orderId === null) {
+                return; // Stop if saving failed
+            }
+
+            const orderNumber = generateOrderNumber();
+
+            // Print Client Ticket
+            const clientTxt = formatForThermalPrinter(cart, orderNumber, paymentMethod).replace(/\n/g, '<br>'); // Pass paymentMethod
+            const clientPrintWindow = window.open('', '_blank', 'width=400,height=600');
+            clientPrintWindow.document.write(`
+                <html>
+                <head>
+                    <title>Pedido Cliente ${orderNumber}</title>
+                    <style>
+                        body { font-family: monospace; padding: 20px; }
+                        .receipt { white-space: pre-wrap; font-size: 1.1em; }
+                    </style>
+                </head>
+                <body>
+                    <div class="receipt">${clientTxt}</div>
+                    <script>
+                        window.onload = function() { window.print(); }
+                    <\/script>
+                </body>
+                </html>
+            `);
+            clientPrintWindow.document.close();
+            clientPrintWindow.focus();
+
+            // Print Kitchen Ticket (again, if not already printed, or as a final confirmation)
+            const kitchenTxt = formatForKitchen(cart, orderNumber).replace(/\n/g, '<br>');
+            const kitchenPrintWindow = window.open('', '_blank', 'width=400,height=600');
+            kitchenPrintWindow.document.write(`
+                <html>
+                <head>
+                    <title>Pedido Cozinha ${orderNumber}</title>
+                    <style>
+                        body { font-family: monospace; padding: 20px; }
+                        .receipt { white-space: pre-wrap; font-size: 1.1em; }
+                    </style>
+                </head>
+                <body>
+                    <div class="receipt">${kitchenTxt}</div>
+                    <script>
+                        window.onload = function() { window.print(); }
+                    <\/script>
+                </body>
+                </html>
+            `);
+            kitchenPrintWindow.document.close();
+            kitchenPrintWindow.focus();
+
+            // Clear cart for the current table after successful printing and saving
             carts[currentTable] = {};
             renderCart();
             clearActiveMainProduct();
+        }
+
+
+        document.getElementById('kitchen-btn').onclick = async function() {
+            printKitchenTicketOnly();
+        };
+
+        document.getElementById('client-btn').onclick = async function() {
+            let cart = carts[currentTable];
+            if (Object.keys(cart).length === 0) {
+                alert("O carrinho está vazio!");
+                return;
+            }
+            showPaymentMethodPopup();
         };
 
         document.getElementById('confirm-accompaniments-btn').onclick = function() {
@@ -453,7 +566,6 @@
 
         document.getElementById('close-accompaniments-popup-btn').onclick = function() {
             console.log('Close accompaniments popup button clicked.'); // Debugging line
-            // This function already calls hideAccompanimentsSection() internally
             clearActiveMainProduct(); 
             renderCart(); // Re-render to ensure display is correct
         };
@@ -464,6 +576,18 @@
 
         document.getElementById('close-history-popup-btn').onclick = function() {
             hideOrderHistoryPopup();
+        };
+
+        // Event listeners for payment method buttons
+        document.querySelectorAll('.payment-btn').forEach(button => {
+            button.onclick = function() {
+                const paymentMethod = this.getAttribute('data-method');
+                processOrderAndPrintAll(paymentMethod); // Call the new function
+            };
+        });
+
+        document.getElementById('cancel-payment-popup-btn').onclick = function() {
+            hidePaymentMethodPopup();
         };
 
         // Initial render

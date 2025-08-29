@@ -29,8 +29,8 @@ def index(request):
 
 @login_required # Protect the dashboard page
 def dashboard(request):
-    orders = Order.objects.order_by('-created_at')
-    total_sales = sum(order.total for order in orders)
+    orders = Order.objects.order_by('-timestamp') # Changed from -created_at to -timestamp
+    total_sales = sum(order.total_price for order in orders) # Changed from order.total to order.total_price
     total_orders = orders.count()
     return render(request, 'pos/dashboard.html', {
         'orders': orders,
