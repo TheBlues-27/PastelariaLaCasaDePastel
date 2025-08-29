@@ -11,6 +11,8 @@ https://docs.djangoproject.com/en/4.0/ref/settings/
 """
 
 from pathlib import Path
+import os
+import dj_database_url  # Add this import
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -19,12 +21,15 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # See https://docs.djangoproject.com/en/4.0/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'your-secret-key'
+SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY', 'your-insecure-default-key-for-dev')  # Use environment variable
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = os.environ.get('DJANGO_DEBUG', 'True') == 'True'
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = os.environ.get('DJANGO_ALLOWED_HOSTS', '127.0.0.1,localhost').split(',')
+# Add your Cloud Run service URL and custom domain if applicable
+# Example: ALLOWED_HOSTS = ['127.0.0.1', 'localhost', 'your-cloud-run-url.run.app', 'your.custom.domain']
+
 
 # Application definition
 
@@ -35,7 +40,8 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
-    'pos',  # Add your POS app here
+    'pos',
+    'storages',  # Add django-storages
 ]
 
 MIDDLEWARE = [
@@ -71,12 +77,21 @@ WSGI_APPLICATION = 'pos_system.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/4.0/ref/settings/#databases
 
+# Default to SQLite for local development, but use DATABASE_URL for production
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+        'NAME': os.path.join(BASE_DIR, 'db.sqlite3'),
     }
 }
+
+# Use dj-database-url to parse the DATABASE_URL environment variable for production
+if 'DATABASE_URL' in os.environ:
+    DATABASES['default'] = dj_database_url.config(
+        conn_max_age=600,
+        ssl_require=True  # Cloud SQL requires SSL
+    )
+
 
 # Password validation
 # https://docs.djangoproject.com/en/4.0/ref/settings/#auth-password-validators
@@ -105,23 +120,39 @@ TIME_ZONE = 'UTC'
 
 USE_I18N = True
 
-USE_L10N = True
-
 USE_TZ = True
+
 
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/4.0/howto/static-files/
 
 STATIC_URL = '/static/'
-STATICFILES_DIRS = [
-    BASE_DIR / 'pos' / 'static',
-]
-STATIC_ROOT = BASE_DIR / 'staticfiles'
+STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')  # Directory for collected static files
+
+MEDIA_URL = '/media/'
+MEDIA_ROOT = os.path.join(BASE_DIR, 'media')  # Directory for uploaded media files
+
+# Google Cloud Storage settings for static and media files
+GS_BUCKET_NAME = os.environ.get('GS_BUCKET_NAME')
+GS_STATIC_LOCATION = 'static'
+GS_MEDIA_LOCATION = 'media'
+
+if GS_BUCKET_NAME:
+    DEFAULT_FILE_STORAGE = 'storages.backends.gcloud.GoogleCloudStorage'
+    STATICFILES_STORAGE = 'storages.backends.gcloud.GoogleCloudStorage'
+    GS_DEFAULT_ACL = 'publicRead'  # Or 'projectPrivate' if you manage access
+    GS_QUERYSTRING_AUTH = False  # Set to False for public static/media files
+
+    # Construct the base URL for static and media files
+    STATIC_URL = f'https://storage.googleapis.com/{GS_BUCKET_NAME}/{GS_STATIC_LOCATION}/'
+    MEDIA_URL = f'https://storage.googleapis.com/{GS_BUCKET_NAME}/{GS_MEDIA_LOCATION}/'
+    GS_LOCATION = GS_STATIC_LOCATION  # Default location for static files
+    GS_FILE_OVERWRITE = False  # Prevent overwriting files with the same name
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/4.0/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-# Add this at the end of your settings.py
-LOGIN_URL = '/login/'
+LOGIN_REDIRECT_URL = '/'
+LOGOUT_REDIRECT_URL = '/'
