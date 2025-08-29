@@ -1,0 +1,151 @@
+{% load static %}
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Dashboard Financeiro</title>
+    <link rel="stylesheet" href="{% static 'pos/style.css' %}">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <div class="dashboard-container">
+        <h1>Dashboard Financeiro</h1>
+        <div style="margin-bottom: 24px;">
+            <button class="filter-btn" id="daily-btn">Diário</button>
+            <button class="filter-btn" id="weekly-btn">Semanal</button>
+            <button class="filter-btn" id="monthly-btn">Mensal</button>
+        </div>
+        <div class="stats">
+            <div class="stat-box">
+                <h2 id="total-sales">R$ {{ total_sales }}</h2>
+                <p>Total de vendas</p>
+            </div>
+            <div class="stat-box">
+                <h2 id="total-orders">{{ total_orders }}</h2>
+                <p>Total de pedidos</p>
+            </div>
+        </div>
+        <div class="chart-section">
+            <canvas id="salesChart" height="80"></canvas>
+        </div>
+        <table>
+            <tr>
+                <th>ID</th>
+                <th>Mesa</th>
+                <th>Data/Hora</th>
+                <th>Total</th>
+            </tr>
+            {% for order in orders %}
+            <tr>
+                <td>{{ order.id }}</td>
+                <td>{{ order.table_number }}</td>
+                <td>{{ order.created_at|date:"d/m/Y H:i" }}</td>
+                <td>R$ {{ order.total }}</td>
+            </tr>
+            {% endfor %}
+        </table>
+    </div>
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            // Prepare data for the chart
+            const orders = [
+                {% if orders %}
+                    {% for order in orders %}
+                        {date: "{{ order.created_at|date:'Y-m-d' }}", total: {{ order.total|floatformat:2 }} }{% if not forloop.last %},{% endif %}
+                    {% endfor %}
+                {% endif %}
+            ];
+
+            let filterType = 'daily';
+
+            function setFilter(type) {
+                filterType = type;
+                updateDashboard();
+                document.getElementById('daily-btn').classList.toggle('active', type === 'daily');
+                document.getElementById('weekly-btn').classList.toggle('active', type === 'weekly');
+                document.getElementById('monthly-btn').classList.toggle('active', type === 'monthly');
+            }
+
+            function getWeek(dateStr) {
+                const date = new Date(dateStr);
+                const janFirst = new Date(date.getFullYear(), 0, 1);
+                const days = Math.floor((date - janFirst) / 86400000);
+                return Math.ceil((days + janFirst.getDay() + 1) / 7);
+            }
+
+            function groupOrders() {
+                const groups = {};
+                orders.forEach(o => {
+                    let key;
+                    if (filterType === 'daily') {
+                        key = o.date;
+                    } else if (filterType === 'weekly') {
+                        const d = new Date(o.date);
+                        key = `${d.getFullYear()}-W${getWeek(o.date)}`;
+                    } else if (filterType === 'monthly') {
+                        key = o.date.slice(0,7); // YYYY-MM
+                    }
+                    if (!groups[key]) groups[key] = { total: 0, count: 0 };
+                    groups[key].total += o.total;
+                    groups[key].count += 1;
+                });
+                return groups;
+            }
+
+            function updateDashboard() {
+                const groups = groupOrders();
+                const labels = Object.keys(groups);
+                const data = labels.map(l => groups[l].total);
+                const totalSales = data.reduce((a, b) => a + b, 0);
+                const totalOrders = labels.reduce((a, l) => a + groups[l].count, 0);
+
+                document.getElementById('total-sales').textContent = 'R$ ' + totalSales.toFixed(2).replace('.', ',');
+                document.getElementById('total-orders').textContent = totalOrders;
+
+                salesChart.data.labels = labels;
+                salesChart.data.datasets[0].data = data;
+                salesChart.update();
+            }
+
+            // Initial chart
+            const ctx = document.getElementById('salesChart').getContext('2d');
+            const groups = groupOrders();
+            const labels = Object.keys(groups);
+            const data = labels.map(l => groups[l].total);
+
+            const salesChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'Vendas',
+                        data: data,
+                        borderColor: '#ff9800',
+                        backgroundColor: 'rgba(255,152,0,0.1)',
+                        fill: true,
+                        tension: 0.3,
+                        pointRadius: 4,
+                        pointBackgroundColor: '#ff9800'
+                    }]
+                },
+                options: {
+                    plugins: {
+                        legend: { display: false }
+                    },
+                    scales: {
+                        x: { title: { display: true, text: 'Período' } },
+                        y: { title: { display: true, text: 'Vendas (R$)' }, beginAtZero: true }
+                    }
+                }
+            });
+
+            // Button event listeners
+            document.getElementById('daily-btn').addEventListener('click', () => setFilter('daily'));
+            document.getElementById('weekly-btn').addEventListener('click', () => setFilter('weekly'));
+            document.getElementById('monthly-btn').addEventListener('click', () => setFilter('monthly'));
+
+            // Set initial filter
+            setFilter('daily');
+        });
+    </script>
+</body>
+</html>
